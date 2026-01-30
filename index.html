@@ -44,13 +44,8 @@
   const bestEl  = document.getElementById('best');
   const coinsEl = document.getElementById('coins');
 
-  // --- Stable "logical" resolution (physics/difficulty stays identical on all devices)
-  const BASE_W = 520;
-  const BASE_H = 312;
-  const W = BASE_W;
-  const H = BASE_H;
-  const GROUND_Y = H - 40;
-
+  let W = canvas.width, H = canvas.height;
+  let GROUND_Y = H - 40; // dynamic after resize
   const GRAVITY    = 0.75;
   const BASE_JUMP  = -13.2;
   const BOOST_JUMP = -16.0;
@@ -70,11 +65,6 @@
   const COINS_PER_LIFE = 25;
   const MAX_HEARTS     = 3;
 
-  // Heart spawn tuning + cooldown
-  let heartCooldownMs = 0;
-  const HEART_COOLDOWN = 14000; // 14s
-
-  // Audio
   let audioCtx = null, masterGain = null, musicGain = null, sfxGain = null;
   let musicTimer = null, audioEnabled = true;
 
@@ -90,11 +80,6 @@
       audioCtx.resume();
     }
   }
-
-  function stopMusic() {
-    if (musicTimer) { clearInterval(musicTimer); musicTimer = null; }
-  }
-
   function beep(freq, dur, type='sine', vol=0.2, out=sfxGain, delay=0) {
     if (!audioCtx) return;
     const osc = audioCtx.createOscillator();
@@ -107,23 +92,18 @@
     osc.connect(g); g.connect(out||sfxGain);
     osc.start(t0); osc.stop(t0 + dur + 0.02);
   }
-
   function startMusic() {
-    stopMusic();
-    const scale = [0,3,5,7,10];
-    const baseA = 220;
+    if (musicTimer) clearInterval(musicTimer);
+    const scale = [0,3,5,7,10]; const baseA = 220;
     let step = 0, chord = 0;
     musicTimer = setInterval(() => {
-      if (!audioCtx || audioCtx.state !== 'running') return;
-      // If paused/gameover/idle, keep CPU low (no beeps)
-      if (state !== 'playing') return;
+      if (!audioCtx) return;
       const f = baseA * Math.pow(2, ((scale[step % scale.length] + (chord?4:0)) / 12));
       beep(f, 0.18, 'sine', 0.12, musicGain, 0);
       if (step % 8 === 7) chord = 1 - chord;
       step++;
     }, 380);
   }
-
   function sfxJump(){ ensureAudio(); beep(660,0.08,'triangle',0.25); beep(880,0.06,'triangle',0.18); }
   function sfxLose(){ ensureAudio(); beep(220,0.25,'sawtooth',0.25); beep(150,0.35,'sine',0.22); }
   function sfxClick(){ ensureAudio(); beep(440,0.06,'square',0.20); }
@@ -138,18 +118,8 @@
   function sfxExtraLife(){ ensureAudio(); beep(1046,0.10,'sine',0.32); beep(1318,0.12,'sine',0.28); beep(1567,0.14,'triangle',0.26); }
   function sfxHit(){ ensureAudio(); beep(320,0.12,'sawtooth',0.24); beep(240,0.16,'sine',0.22); }
 
-  // Best score key (stable, not tied to internal version text)
-  const BEST_KEY = 'otr_best';
-  const getBest = () => +localStorage.getItem(BEST_KEY) || 0;
-  const setBest = (v) => localStorage.setItem(BEST_KEY, v);
-
-  // Migrate old key if present (keeps user best)
-  const OLD_KEY = 'otr_best_v2plus';
-  try {
-    const old = +localStorage.getItem(OLD_KEY);
-    const cur = +localStorage.getItem(BEST_KEY);
-    if (old && (!cur || old > cur)) localStorage.setItem(BEST_KEY, String(old));
-  } catch {}
+  const getBest = () => +localStorage.getItem('otr_best_v2plus') || 0;
+  const setBest = (v) => localStorage.setItem('otr_best_v2plus', v);
 
   function rand(min,max){ return Math.random()*(max-min)+min; }
   function rint(min,max){ return Math.floor(rand(min,max)); }
@@ -160,7 +130,6 @@
     player = { x: 40, y: GROUND_Y - 22, w: 26, h: 26, vy: 0, onGround: true };
     obstacles = []; coins = []; powerups = []; pend = [];
     score = 0; coinCount = 0; lives = 0; invulnMs = 0; boostMs = 0;
-    heartCooldownMs = 2500; // small grace at start
     spawnTimerMs = 0; lastTime = performance.now();
     scoreEl.textContent = score; coinsEl.textContent = coinCount;
     best = getBest(); bestEl.textContent = best;
@@ -178,7 +147,6 @@
     for (const p of pool){ if ((roll -= p.w) <= 0) return p.type; }
     return 'normal';
   }
-
   function sizeByType(type){
     if (type==='short')  return {h:rint(16,28), w:rint(18,40)};
     if (type==='wide')   return {h:rint(18,36), w:rint(60,120)};
@@ -192,16 +160,6 @@
   function spawnNow(spec){
     const {h,w,color} = spec;
     obstacles.push({ x: W + 10, y: GROUND_Y - h, w, h, color, passed:false });
-  }
-
-  function maybeSpawnHeart(w,h){
-    if (lives >= MAX_HEARTS) return;
-    if (heartCooldownMs > 0) return;
-    // Slightly higher than before, but controlled by cooldown
-    if (Math.random() < 0.10) {
-      spawnHeart(w,h);
-      heartCooldownMs = HEART_COOLDOWN;
-    }
   }
 
   function spawnObstacle(){
@@ -227,7 +185,6 @@
       spawnTimerMs = (gapPx / Math.max(1, speed)) * (1000/60);
       if (Math.random() < 0.55) spawnCoinsCluster(40,30);
       if (Math.random() < 0.12) spawnBoost(40,30);
-      maybeSpawnHeart(40,30);
       return;
     }
 
@@ -247,7 +204,6 @@
       spawnTimerMs = (gapPx / Math.max(1, speed)) * (1000/60);
       if (Math.random() < 0.55) spawnCoinsCluster(s2.w,s2.h);
       if (Math.random() < 0.12) spawnBoost(s2.w,s2.h);
-      maybeSpawnHeart(s2.w,s2.h);
       return;
     }
 
@@ -263,10 +219,10 @@
 
     if (Math.random() < 0.55) spawnCoinsCluster(w,h);
     if (Math.random() < 0.12) spawnBoost(w,h);
-    maybeSpawnHeart(w,h);
+    if (lives < 1 && Math.random() < 0.07) spawnHeart(w,h);
   }
 
-  // Coins: Cluster preferred (80%), single coin rare (20%)
+  // ★ Coin-Spawn: Cluster bevorzugt (80%), Einzelcoin selten (20%)
   function spawnCoinsCluster(w,h){
     if (Math.random() < 0.8) {
       const n = rint(3,6);
@@ -321,20 +277,7 @@
     return (dx*dx + dy*dy) <= (c.r*c.r);
   }
 
-  // --- Anti-tunneling: split big dt into smaller steps
-  const MAX_STEP_MS = 16;
-
   function update(dt){
-    let remaining = dt;
-    while (remaining > 0) {
-      const step = Math.min(MAX_STEP_MS, remaining);
-      updateStep(step);
-      remaining -= step;
-    }
-  }
-
-  function updateStep(dt){
-    // pending scheduled obstacles
     for (let i=pend.length-1;i>=0;i--){
       pend[i].delayMs -= dt;
       if (pend[i].delayMs <= 0){ spawnNow(pend[i].spec); pend.splice(i,1); }
@@ -345,12 +288,6 @@
 
     speed = Math.min(SPEED_MAX, speed + dt * rampForScore(score));
 
-    // timers
-    if (boostMs > 0) boostMs = Math.max(0, boostMs - dt);
-    if (invulnMs > 0) invulnMs = Math.max(0, invulnMs - dt);
-    if (heartCooldownMs > 0) heartCooldownMs = Math.max(0, heartCooldownMs - dt);
-
-    // player physics
     player.vy += GRAVITY;
     player.y  += player.vy;
     if (player.y + player.h >= GROUND_Y){
@@ -359,7 +296,9 @@
       player.onGround = true;
     }
 
-    // obstacles
+    if (boostMs > 0) boostMs = Math.max(0, boostMs - dt);
+    if (invulnMs > 0) invulnMs = Math.max(0, invulnMs - dt);
+
     for (let i=obstacles.length-1;i>=0;i--){
       const o = obstacles[i];
       o.x -= speed;
@@ -382,7 +321,6 @@
       }
     }
 
-    // coins
     for (let i=coins.length-1;i>=0;i--){
       const c = coins[i];
       c.x -= speed;
@@ -396,7 +334,6 @@
       if (c.x + c.r < -10 || c.collected) coins.splice(i,1);
     }
 
-    // powerups
     for (let i=powerups.length-1;i>=0;i--){
       const p = powerups[i];
       p.x -= speed;
@@ -404,7 +341,6 @@
         p.taken = true;
         if (p.type === 'heart') {
           if (lives < MAX_HEARTS) { lives++; sfxExtraLife(); }
-          heartCooldownMs = HEART_COOLDOWN; // prevent heart spam
         } else {
           boostMs = 3600; sfxBoost();
         }
@@ -414,7 +350,6 @@
   }
 
   function draw(){
-    // Clear in logical coords (transform is set in resize handler)
     ctx.clearRect(0,0,W,H);
 
     const t = performance.now() * 0.0002;
@@ -448,12 +383,12 @@
 
     drawHearts(lives);
 
-    if (state === 'idle') overlay('Tippe zum Starten', 'Tippe / Space zum Starten');
-    if (state === 'paused') overlay('Pause', 'Tippe oder Button: Weiter');
-    if (state === 'gameover') overlay('Game Over', 'Tippe / Space: Neustart');
+    if (state === 'idle') overlay('Tippe zum Starten');
+    if (state === 'paused') overlay('Pause');
+    if (state === 'gameover') overlay('Game Over');
   }
 
-  function overlay(msg, sub){
+  function overlay(msg){
     ctx.fillStyle = 'rgba(11,14,34,.75)';
     ctx.fillRect(0,0,W,H);
     ctx.fillStyle = '#fff';
@@ -461,7 +396,7 @@
     ctx.font = '800 24px system-ui, -apple-system, Segoe UI';
     ctx.fillText(msg, W/2, H/2 - 8);
     ctx.font = '600 14px system-ui, -apple-system, Segoe UI';
-    ctx.fillText(sub, W/2, H/2 + 16);
+    ctx.fillText('Tippe / Space zum Springen', W/2, H/2 + 16);
     ctx.textAlign = 'left';
   }
 
@@ -476,27 +411,23 @@
     ctx.closePath();
     ctx.fill();
   }
-
   function drawCoin(x,y,r){
     ctx.beginPath(); ctx.arc(x, y, r+2, 0, Math.PI*2); ctx.fillStyle = '#facc15'; ctx.fill();
     ctx.beginPath(); ctx.arc(x, y, r,   0, Math.PI*2); ctx.fillStyle = '#f59e0b'; ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(x - r*0.4, y - r*0.9, r*0.8, r*0.25);
   }
-
   function drawBoost(x,y,r){
     ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI/4);
     ctx.fillStyle = '#22d3ee'; ctx.fillRect(-r, -r, r*2, r*2);
     ctx.restore();
   }
-
-  function drawHeart(x,y){
+  function drawHeart(x,y,r){
     ctx.save();
     ctx.font = 'bold 16px system-ui, sans-serif';
     ctx.fillStyle = '#ff6b81';
     ctx.fillText('❤', x-6, y+6);
     ctx.restore();
   }
-
   function drawHearts(n){
     if (n <= 0) return;
     ctx.save();
@@ -519,18 +450,14 @@
     state = 'playing';
     btn.textContent = 'Pause';
     ensureAudio();
-    if (audioCtx && audioEnabled) audioCtx.resume();
   }
-
   function togglePause(){
     if (state === 'playing'){
       state = 'paused';
       btn.textContent = 'Weiter';
-      if (audioCtx) audioCtx.suspend();
     } else if (state === 'paused'){
       state = 'playing';
       btn.textContent = 'Pause';
-      if (audioCtx && audioEnabled) audioCtx.resume();
     } else if (state === 'gameover'){
       start();
     }
@@ -543,7 +470,6 @@
     else if (state === 'paused') togglePause();
     else if (state === 'gameover') start();
   }
-
   function onKey(e){
     if (e.code==='Space' || e.code==='ArrowUp'){
       e.preventDefault();
@@ -551,50 +477,6 @@
     }
   }
 
-  // --- Canvas resize: scale rendering to display size, keep logical coords stable
-  function resizeCanvasToDisplaySize() {
-    const rect = canvas.getBoundingClientRect();
-    const dpr  = Math.min(2, window.devicePixelRatio || 1);
-
-    const displayW = Math.max(1, rect.width);
-    const displayH = Math.max(1, rect.height);
-
-    const pxW = Math.round(displayW * dpr);
-    const pxH = Math.round(displayH * dpr);
-
-    if (canvas.width !== pxW || canvas.height !== pxH){
-      canvas.width = pxW;
-      canvas.height = pxH;
-    }
-
-    const scaleX = (displayW / BASE_W) * dpr;
-    const scaleY = (displayH / BASE_H) * dpr;
-
-    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-
-    // Keep player consistent after resize (no floating / underground)
-    if (player) {
-      if (player.y + player.h >= GROUND_Y) {
-        player.y = GROUND_Y - player.h;
-        player.vy = 0;
-        player.onGround = true;
-      } else {
-        player.y = Math.min(player.y, GROUND_Y - player.h);
-      }
-    }
-  }
-
-  // --- Visibility / background handling (battery + sanity)
-  document.addEventListener('visibilitychange', () => {
-    if (!audioCtx) return;
-    if (document.hidden) {
-      audioCtx.suspend();
-    } else {
-      if (audioEnabled && state === 'playing') audioCtx.resume();
-    }
-  });
-
-  // init
   reset();
   requestAnimationFrame(loop);
 
@@ -612,14 +494,24 @@
     e.preventDefault();
     audioEnabled = !audioEnabled;
     muteBtn.textContent = audioEnabled ? '🔊' : '🔇';
-    if (!audioEnabled) {
-      if (audioCtx) audioCtx.suspend();
-    } else {
-      ensureAudio();
-      if (audioCtx && state === 'playing' && !document.hidden) audioCtx.resume();
-    }
+    if (audioEnabled) ensureAudio(); else if (audioCtx) audioCtx.suspend();
   });
 
+  function resizeCanvasToDisplaySize() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr  = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(rect.width * dpr);
+    const h = Math.round(rect.height * dpr);
+    if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+
+    W = canvas.width;
+    H = canvas.height;
+    GROUND_Y = H - 40;
+
+    if (player) {
+      player.y = Math.min(player.y, GROUND_Y - player.h);
+    }
+  }
   new ResizeObserver(resizeCanvasToDisplaySize).observe(canvas);
   resizeCanvasToDisplaySize();
 })();
